@@ -1,0 +1,391 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Butterfly Garden — follow & click for flowers 🌸🦋</title>
+<style>
+  :root{
+    --bg1:#e6f7ff; --bg2:#f7f1ff;
+    --butterfly-body:#2b2b2b;
+  }
+  html,body{height:100%;margin:0;font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
+  body{
+    background: radial-gradient(circle at 20% 10%, rgba(255,255,255,0.6), transparent 6%),
+                linear-gradient(120deg, var(--bg1), var(--bg2));
+    overflow:hidden;
+    user-select:none;
+    -webkit-user-select:none;
+  }
+
+  /* Top controls */
+  .controls{
+    position:fixed; left:14px; top:14px; z-index:9999;
+    background: rgba(255,255,255,0.85); padding:10px 12px; border-radius:12px;
+    box-shadow: 0 6px 18px rgba(20,20,30,0.08); backdrop-filter: blur(6px);
+    display:flex; gap:10px; align-items:center; font-size:14px;
+  }
+  .controls label{font-size:13px; color:#222}
+  .controls input[type="range"]{width:120px}
+
+  /* canvas sits full screen */
+  #stage{position:fixed; inset:0; display:block; z-index:1}
+
+  /* butterfly element (SVG) */
+  .butterfly {
+    position:fixed;
+    width:96px; height:96px;
+    transform-origin:50% 50%;
+    z-index:10;
+    pointer-events:none;
+    filter: drop-shadow(0 10px 18px rgba(30,30,40,0.12));
+  }
+  /* simple wing flutter (CSS) */
+  .wing {
+    transform-origin: center;
+    animation: flutter 360ms ease-in-out infinite;
+  }
+  .wing-left{ animation-delay: 0; }
+  .wing-right{ animation-delay: 140ms; }
+  @keyframes flutter{
+    0%{ transform: rotate(0deg) translateY(0px) }
+    25%{ transform: rotate(8deg) translateY(-1px) }
+    50%{ transform: rotate(0deg) translateY(0px) }
+    75%{ transform: rotate(-8deg) translateY(-1px) }
+    100%{ transform: rotate(0deg) translateY(0px) }
+  }
+
+  /* flowers (created by JS) */
+  .flower{
+    position:absolute; width:22px; height:22px; pointer-events:none; z-index:5;
+    transform-origin:50% 50%;
+    animation: floatUp 2.2s ease-out forwards;
+    will-change: transform, opacity;
+  }
+  @keyframes floatUp{
+    0%{ transform: translateY(0) scale(0.9); opacity:1 }
+    100%{ transform: translateY(-60px) scale(1.15); opacity:0 }
+  }
+
+  /* subtle moving background elements */
+  .swaying-leaf{
+    position:absolute; width:160px; height:100px; opacity:0.06; z-index:0;
+    animation: sway 12s linear infinite;
+    filter: blur(1px);
+  }
+  @keyframes sway{
+    0%{ transform: translateX(0) rotate(-3deg) }
+    50%{ transform: translateX(40px) rotate(6deg) }
+    100%{ transform: translateX(0) rotate(-3deg) }
+  }
+
+  /* small bottom tip text */
+  .tip { position:fixed; left:16px; bottom:10px; z-index:9999; font-size:13px; color:#163; opacity:0.85 }
+</style>
+</head>
+<body>
+  <div class="controls">
+    <label>Size</label>
+    <input id="size" type="range" min="48" max="180" value="96" />
+    <label><input id="trailToggle" type="checkbox" checked /> Trail</label>
+    <label><input id="flowersToggle" type="checkbox" checked /> Flowers on click</label>
+    <button id="clearBtn" title="Clear all flowers/trails">Clear</button>
+  </div>
+
+  <canvas id="stage"></canvas>
+
+  <!-- butterfly SVG: positioned by JS -->
+  <div id="butterfly" class="butterfly" aria-hidden="true">
+    <svg viewBox="0 0 100 100" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="wingGradA" x1="0" x2="1">
+          <stop offset="0" stop-color="#ff9db2"/>
+          <stop offset="1" stop-color="#ffd3a5"/>
+        </linearGradient>
+        <linearGradient id="wingGradB" x1="0" x2="1">
+          <stop offset="0" stop-color="#8ad5ff"/>
+          <stop offset="1" stop-color="#b9ffd9"/>
+        </linearGradient>
+      </defs>
+      <!-- left wing -->
+      <g class="wing wing-left">
+        <ellipse cx="30" cy="50" rx="24" ry="16" fill="url(#wingGradA)" />
+        <ellipse cx="20" cy="38" rx="11" ry="7" fill="rgba(255,255,255,0.28)"/>
+      </g>
+      <!-- right wing -->
+      <g class="wing wing-right">
+        <ellipse cx="70" cy="50" rx="24" ry="16" fill="url(#wingGradB)" />
+        <ellipse cx="80" cy="38" rx="11" ry="7" fill="rgba(255,255,255,0.28)"/>
+      </g>
+      <!-- body -->
+      <g transform="translate(48,36)">
+        <rect x="-2" y="0" width="4" height="26" rx="2" fill="#2b2b2b" />
+        <circle cx="0" cy="-6" r="3" fill="#2b2b2b" />
+      </g>
+    </svg>
+  </div>
+
+  <div class="tip">Move your cursor → butterfly follows. Click to spawn flowers.</div>
+
+<script>
+(() => {
+  // DOM
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d', { alpha: true });
+  const butterflyEl = document.getElementById('butterfly');
+  const sizeRange = document.getElementById('size');
+  const trailToggle = document.getElementById('trailToggle');
+  const flowersToggle = document.getElementById('flowersToggle');
+  const clearBtn = document.getElementById('clearBtn');
+
+  // sizing
+  function resizeCanvas(){
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+
+  // state
+  let mouse = { x: window.innerWidth/2, y: window.innerHeight/2 };
+  let butter = { x: mouse.x, y: mouse.y, vx:0, vy:0, angle:0, size: +sizeRange.value };
+  let lastTime = performance.now();
+  let trails = []; // store recent positions for a trailing effect
+  const MAX_TRAIL = 12;
+  let flowersContainer = []; // flower objects managed by JS (DOM elements)
+  let enabledTrail = trailToggle.checked;
+  let enabledFlowers = flowersToggle.checked;
+
+  // helpers
+  function lerp(a,b,t){ return a + (b-a)*t }
+  function dist(a,b){ const dx=a.x-b.x, dy=a.y-b.y; return Math.sqrt(dx*dx+dy*dy) }
+  function angleTo(a,b){ return Math.atan2(b.y-a.y, b.x-a.x) }
+
+  // follow cursor with springiness
+  function updateButter(dt){
+    // desired position is mouse
+    const stiffness = 0.02; // spring / responsiveness
+    const damping = 0.85;
+
+    // spring force
+    const fx = (mouse.x - butter.x) * stiffness;
+    const fy = (mouse.y - butter.y) * stiffness;
+
+    butter.vx = (butter.vx + fx) * damping;
+    butter.vy = (butter.vy + fy) * damping;
+
+    butter.x += butter.vx * dt;
+    butter.y += butter.vy * dt;
+
+    // angle toward velocity (or mouse)
+    const targetAngle = Math.atan2(butter.vy, butter.vx) + Math.PI/2; // rotate to face forward
+    // smooth angle
+    const a = ((targetAngle - butter.angle + Math.PI) % (2*Math.PI)) - Math.PI;
+    butter.angle += a * 0.12;
+
+    // size follow slider
+    butter.size = +sizeRange.value;
+    butterflyEl.style.width = butter.size + 'px';
+    butterflyEl.style.height = butter.size + 'px';
+
+    // add to trail
+    if(enabledTrail){
+      trails.unshift({x: butter.x, y: butter.y, size: butter.size, t: performance.now()});
+      if(trails.length > MAX_TRAIL) trails.pop();
+    } else {
+      trails = [];
+    }
+  }
+
+  // render stage: draw subtle motion lines for trail (canvas)
+  function render(){
+    // clear with partial alpha to create smoothing (but preserve transparency)
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    // draw trails as soft blurred circles
+    for(let i = trails.length-1; i >= 0; i--){
+      const p = trails[i];
+      const age = (performance.now() - p.t) / 1000;
+      const alpha = Math.max(0, 0.35 - (i * 0.02));
+      const radius = p.size * (0.35 - i * 0.015);
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(255, 160, 180, ${alpha})`;
+      ctx.ellipse(p.x, p.y + 12, radius, radius*0.7, 0, 0, Math.PI*2);
+      ctx.fill();
+      // faint second color for depth
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(150, 220, 255, ${alpha*0.6})`;
+      ctx.ellipse(p.x, p.y - 6, radius*0.6, radius*0.45, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  // animate main loop
+  function loop(now){
+    const dt = Math.min(1/30, (now - lastTime) / 16.67); // normalized
+    lastTime = now;
+
+    updateButter(dt);
+    render();
+
+    // position butterfly DOM element smoothly
+    butterflyEl.style.left = (butter.x - butter.size/2) + 'px';
+    butterflyEl.style.top  = (butter.y - butter.size/2) + 'px';
+    butterflyEl.style.transform = `rotate(${butter.angle}rad)`;
+
+    // update flower DOM elements (float + remove after done)
+    for(let i = flowersContainer.length - 1; i >= 0; i--){
+      const f = flowersContainer[i];
+      // life progress
+      const life = (performance.now() - f.birth) / f.ttl;
+      if(life >= 1){
+        // remove
+        f.el.remove();
+        flowersContainer.splice(i,1);
+        continue;
+      }
+      // subtle horizontal drift with wind
+      const dx = Math.sin((f.birth + life*8) * 1.3) * f.wobble;
+      f.el.style.transform = `translate(${f.tx + dx}px, ${f.ty - life*70 + Math.sin(life*6 + f.seed)*6}px) rotate(${f.rot + life*120}deg) scale(${1 - life*0.18})`;
+      f.el.style.opacity = String(1 - life*1.1);
+    }
+
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // mouse events
+  window.addEventListener('mousemove', (e) => {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+  });
+
+  // click to spawn flowers
+  window.addEventListener('click', (e) => {
+    if(!enabledFlowers) return;
+    spawnFlowerBurst(e.clientX, e.clientY);
+  });
+
+  // spawn flower burst: creates DOM elements positioned absolutely
+  function spawnFlowerBurst(x,y){
+    const count = 8 + Math.floor(Math.random()*6);
+    for(let i=0;i<count;i++){
+      const el = document.createElement('div');
+      el.className = 'flower';
+      // random flower SVG inside
+      el.innerHTML = flowerSVG(randColor(), randColor(), Math.random()*0.9 + 0.6);
+      document.body.appendChild(el);
+      const angle = Math.PI*2*(i/count) + (Math.random()-0.5)*0.5;
+      const speed = 18 + Math.random()*56;
+      const tx = x + Math.cos(angle)*speed + (Math.random()-0.5)*24;
+      const ty = y + Math.sin(angle)*speed + (Math.random()-0.5)*12;
+      el.style.left = (tx - 11) + 'px';
+      el.style.top  = (ty - 11) + 'px';
+      el.style.zIndex = 6 + i;
+      el.style.transform = `translate(0px,0px)`;
+      // small scale & rotation
+      el.style.opacity = '1';
+      // store for JS animation
+      flowersContainer.push({
+        el,
+        birth: performance.now(),
+        ttl: 2200 + Math.random()*900,
+        tx: tx - x, // relative start offset for transform math
+        ty: ty - y,
+        seed: Math.random()*10,
+        wobble: 6 + Math.random()*10,
+        rot: (Math.random()-0.5)*45,
+      });
+    }
+  }
+
+  // flower shape as inline SVG string (two colors: petal + center)
+  function flowerSVG(petal, center, scale=1){
+    const r = 10 * scale;
+    return `
+      <svg viewBox="0 0 24 24" width="${22}" height="${22}" xmlns="http://www.w3.org/2000/svg">
+        <g transform="translate(12,12)">
+          <g>
+            <ellipse rx="${r*0.55}" ry="${r*0.9}" transform="rotate(0) translate(${r*0.6},0)" fill="${petal}" opacity="0.98"/>
+            <ellipse rx="${r*0.55}" ry="${r*0.9}" transform="rotate(72) translate(${r*0.6},0)" fill="${petal}" opacity="0.98"/>
+            <ellipse rx="${r*0.55}" ry="${r*0.9}" transform="rotate(144) translate(${r*0.6},0)" fill="${petal}" opacity="0.98"/>
+            <ellipse rx="${r*0.55}" ry="${r*0.9}" transform="rotate(216) translate(${r*0.6},0)" fill="${petal}" opacity="0.98"/>
+            <ellipse rx="${r*0.55}" ry="${r*0.9}" transform="rotate(288) translate(${r*0.6},0)" fill="${petal}" opacity="0.98"/>
+          </g>
+          <circle r="${r*0.45}" fill="${center}" stroke="rgba(0,0,0,0.03)" stroke-width="0.6"/>
+        </g>
+      </svg>
+    `;
+  }
+
+  // utility color generator
+  function randColor(){
+    const palettes = [
+      ['#ff9db2','#ff6f91','#ffe3d3'],
+      ['#ffd3a5','#ffd166','#ffc9de'],
+      ['#8ad5ff','#6ecff6','#baf2d8'],
+      ['#c6f6d5','#a7f3d0','#ffd6e0'],
+      ['#f9f0ff','#e8d5ff','#ffd9b6']
+    ];
+    const p = palettes[Math.floor(Math.random()*palettes.length)];
+    return p[Math.floor(Math.random()*p.length)];
+  }
+
+  // UI bindings
+  trailToggle.addEventListener('change', (e) => {
+    enabledTrail = e.target.checked;
+    if(!enabledTrail) trails = [];
+  });
+  flowersToggle.addEventListener('change', (e) => enabledFlowers = e.target.checked);
+  clearBtn.addEventListener('click', () => {
+    // remove flower DOMs
+    for(const f of flowersContainer) f.el.remove();
+    flowersContainer = [];
+    trails = [];
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+  });
+
+  // small decorative swaying leaf backgrounds (pure DOM, low opacity)
+  (function plantDecoration(){
+    const leaf = document.createElement('svg');
+    leaf.className = 'swaying-leaf';
+    leaf.setAttribute('viewBox','0 0 200 120');
+    leaf.style.left = '10px';
+    leaf.style.top = '20px';
+    leaf.innerHTML = '<path d=\"M10 90 C70 10, 170 10, 190 90 C150 40, 40 40, 10 90 Z\" fill="#a0d9b9" />';
+    document.body.appendChild(leaf);
+
+    const leaf2 = leaf.cloneNode(true);
+    leaf2.style.right = '10px';
+    leaf2.style.left = 'unset';
+    leaf2.style.top = '120px';
+    leaf2.style.opacity = 0.04;
+    leaf2.style.transform = 'scaleX(-1)';
+    document.body.appendChild(leaf2);
+  })();
+
+  // initialize butterfly position at center
+  window.addEventListener('load', ()=> {
+    butterflyEl.style.left = (butter.x - butter.size/2) + 'px';
+    butterflyEl.style.top = (butter.y - butter.size/2) + 'px';
+  });
+
+  // small helper to randomize on first load (makes it playful)
+  (function randomStartMotion(){
+    const jitter = 0.02;
+    setInterval(() => {
+      mouse.x += (Math.random()-0.5) * 60 * jitter;
+      mouse.y += (Math.random()-0.5) * 60 * jitter;
+    }, 900);
+  })();
+
+  // optional: keyboard shortcut 'f' toggles flowers, 't' toggles trails
+  window.addEventListener('keydown', (e) => {
+    if(e.key === 'f'){ flowersToggle.checked = !flowersToggle.checked; flowersToggle.dispatchEvent(new Event('change')); }
+    if(e.key === 't'){ trailToggle.checked = !trailToggle.checked; trailToggle.dispatchEvent(new Event('change')); }
+  });
+
+})();
+</script>
+</body>
+</html>
